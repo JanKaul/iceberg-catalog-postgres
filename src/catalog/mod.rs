@@ -49,7 +49,48 @@ impl PostgresCatalog {
 impl Catalog for PostgresCatalog {
     /// Lists all tables in the given namespace.
     async fn list_tables(&self, namespace: Namespace) -> Result<Vec<TableIdentifier>> {
-        Err(IcebergError::Message("Not implemented.".to_string()))
+        let name = self.name.as_ref().ok_or(IcebergError::Message(
+            "Catalog is not initialized".to_string(),
+        ))?;
+        let rows = self
+            .client
+            .query(
+                &("SELECT (".to_string()
+                    + CATALOG_NAME_COLUMN
+                    + ", "
+                    + TABLE_NAMESPACE_COLUMN
+                    + ", "
+                    + TABLE_NAME_COLUMN
+                    + ", "
+                    + METADATA_LOCATION_COLUMN
+                    + ", "
+                    + PREVIOUS_METADATA_LOCATION_COLUMN
+                    + ") FROM "
+                    + CATALOG_TABLE_NAME
+                    + " WHERE "
+                    + CATALOG_NAME_COLUMN
+                    + " = '"
+                    + name
+                    + "' AND "
+                    + TABLE_NAMESPACE_COLUMN
+                    + "= '"
+                    + &format!("{}", namespace)
+                    + "';"),
+                &[],
+            )
+            .await
+            .map_err(|err| IcebergError::Message(err.to_string()))?;
+        rows.into_iter()
+            .map(|x| {
+                let namespace: &str = x
+                    .try_get(&TABLE_NAMESPACE_COLUMN)
+                    .map_err(|err| IcebergError::Message(err.to_string()))?;
+                let name: &str = x
+                    .try_get(TABLE_NAME_COLUMN)
+                    .map_err(|err| IcebergError::Message(err.to_string()))?;
+                Ok(TableIdentifier::parse(&format!("{}.{}", namespace, name))?)
+            })
+            .collect::<std::result::Result<Vec<_>, IcebergError>>()
     }
     /// Create a table from an identifier and a schema
     async fn create_table(&self, identifier: TableIdentifier, schema: SchemaV2) -> Result<Table> {
