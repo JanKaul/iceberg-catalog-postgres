@@ -14,10 +14,7 @@ use iceberg_rs::{
     table::Table,
 };
 
-use tokio_postgres::{
-    tls::{MakeTlsConnect, NoTlsStream},
-    Client, Connection, NoTls, Socket,
-};
+use tokio_postgres::{tls::NoTlsStream, Client, Connection, NoTls, Socket};
 
 static catalog_table_name: &str = "iceberg_tables";
 static catalog_name_column: &str = "catalog_name";
@@ -28,17 +25,23 @@ static previous_metadata_location_column: &str = "previous_metadata_location";
 
 /// Postgres catalog
 pub struct PostgresCatalog {
+    name: Option<String>,
     client: Client,
 }
 
 impl PostgresCatalog {
     /// Synchronously create a PostgresCatalog object that needs to be initialized later
     pub async fn connect(url: &str) -> Result<(Self, Connection<Socket, NoTlsStream>)> {
-        let mut database_url = url.to_string();
         let (client, connection) = tokio_postgres::connect(&url, NoTls)
             .await
             .map_err(|err| IcebergError::Message(format!("{}", err)))?;
-        Ok((PostgresCatalog { client: client }, connection))
+        Ok((
+            PostgresCatalog {
+                client: client,
+                name: None,
+            },
+            connection,
+        ))
     }
 }
 
@@ -88,11 +91,35 @@ impl Catalog for PostgresCatalog {
     /// A custom Catalog implementation must have a no-arg constructor. A compute engine like Spark
     /// or Flink will first initialize the catalog without any arguments, and then call this method to
     /// complete catalog initialization with properties passed into the engine.
-    async fn initialize(
-        &mut self,
-        name: String,
-        properties: HashMap<String, String>,
-    ) -> Result<()> {
-        Err(IcebergError::Message("Not implemented.".to_string()))
+    async fn initialize(&mut self, name: &str, properties: HashMap<String, String>) -> Result<()> {
+        self.name = Some(name.to_string());
+        self.client
+            .execute(
+                &("CREATE TABLE IF NOT EXISTS ".to_string()
+                    + catalog_table_name
+                    + " ("
+                    + catalog_name_column
+                    + " VARCHAR(255) NOT NULL,"
+                    + table_namespace_column
+                    + " VARCHAR(255) NOT NULL,"
+                    + table_name_column
+                    + " VARCHAR(255) NOT NULL,"
+                    + metadata_location_column
+                    + " VARCHAR(5500),"
+                    + previous_metadata_location_column
+                    + " VARCHAR(5500),"
+                    + "PRIMARY KEY ("
+                    + catalog_name_column
+                    + ", "
+                    + table_namespace_column
+                    + ", "
+                    + table_name_column
+                    + ")"
+                    + ");"),
+                &[],
+            )
+            .await
+            .map_err(|err| IcebergError::Message(err.to_string()))?;
+        Ok(())
     }
 }
