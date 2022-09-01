@@ -2,7 +2,7 @@
 Implements the postgres catalog
 */
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use iceberg_rs::{
     catalog::{
@@ -14,6 +14,7 @@ use iceberg_rs::{
     table::Table,
 };
 
+use object_store::ObjectStore;
 use tokio_postgres::{tls::NoTlsStream, Client, Connection, NoTls, Socket};
 
 static CATALOG_TABLE_NAME: &str = "iceberg_tables";
@@ -27,11 +28,15 @@ static PREVIOUS_METADATA_LOCATION_COLUMN: &str = "previous_metadata_location";
 pub struct PostgresCatalog {
     name: Option<String>,
     client: Client,
+    object_store: Arc<dyn ObjectStore>,
 }
 
 impl PostgresCatalog {
     /// Synchronously create a PostgresCatalog object that needs to be initialized later
-    pub async fn connect(url: &str) -> Result<(Self, Connection<Socket, NoTlsStream>)> {
+    pub async fn connect(
+        url: &str,
+        object_store: Arc<dyn ObjectStore>,
+    ) -> Result<(Self, Connection<Socket, NoTlsStream>)> {
         let (client, connection) = tokio_postgres::connect(&url, NoTls)
             .await
             .map_err(|err| IcebergError::Message(format!("{}", err)))?;
@@ -39,6 +44,7 @@ impl PostgresCatalog {
             PostgresCatalog {
                 client: client,
                 name: None,
+                object_store: object_store,
             },
             connection,
         ))
