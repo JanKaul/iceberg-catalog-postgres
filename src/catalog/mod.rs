@@ -16,12 +16,12 @@ use iceberg_rs::{
 
 use tokio_postgres::{tls::NoTlsStream, Client, Connection, NoTls, Socket};
 
-static catalog_table_name: &str = "iceberg_tables";
-static catalog_name_column: &str = "catalog_name";
-static table_namespace_column: &str = "table_namespace";
-static table_name_column: &str = "table_name";
-static metadata_location_column: &str = "metadata_location";
-static previous_metadata_location_column: &str = "previous_metadata_location";
+static CATALOG_TABLE_NAME: &str = "iceberg_tables";
+static CATALOG_NAME_COLUMN: &str = "catalog_name";
+static TABLE_NAMESPACE_COLUMN: &str = "table_namespace";
+static TABLE_NAME_COLUMN: &str = "table_name";
+static METADATA_LOCATION_COLUMN: &str = "metadata_location";
+static PREVIOUS_METADATA_LOCATION_COLUMN: &str = "previous_metadata_location";
 
 /// Postgres catalog
 pub struct PostgresCatalog {
@@ -96,24 +96,24 @@ impl Catalog for PostgresCatalog {
         self.client
             .execute(
                 &("CREATE TABLE IF NOT EXISTS ".to_string()
-                    + catalog_table_name
+                    + CATALOG_TABLE_NAME
                     + " ("
-                    + catalog_name_column
+                    + CATALOG_NAME_COLUMN
                     + " VARCHAR(255) NOT NULL,"
-                    + table_namespace_column
+                    + TABLE_NAMESPACE_COLUMN
                     + " VARCHAR(255) NOT NULL,"
-                    + table_name_column
+                    + TABLE_NAME_COLUMN
                     + " VARCHAR(255) NOT NULL,"
-                    + metadata_location_column
+                    + METADATA_LOCATION_COLUMN
                     + " VARCHAR(5500),"
-                    + previous_metadata_location_column
+                    + PREVIOUS_METADATA_LOCATION_COLUMN
                     + " VARCHAR(5500),"
                     + "PRIMARY KEY ("
-                    + catalog_name_column
+                    + CATALOG_NAME_COLUMN
                     + ", "
-                    + table_namespace_column
+                    + TABLE_NAMESPACE_COLUMN
                     + ", "
-                    + table_name_column
+                    + TABLE_NAME_COLUMN
                     + ")"
                     + ");"),
                 &[],
