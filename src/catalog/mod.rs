@@ -137,10 +137,12 @@ impl Catalog for PostgresCatalog {
             // TODO: Delete associated files
             Ok(())
         } else if n_rows == 0 {
-            Err(IcebergError::Message("Table already exists".to_string()))
+            Err(IcebergError::Message(
+                "Dropping table failed. No table matched the identifier.".to_string(),
+            ))
         } else {
             Err(IcebergError::Message(
-                "More than one table was added to the catalog.".to_string(),
+                "More than one table was dropped from the catalog.".to_string(),
             ))
         }
     }
@@ -190,11 +192,17 @@ impl Catalog for PostgresCatalog {
             )
             .map_err(|err| IcebergError::Message(err.to_string()))?;
             let catalog: Arc<dyn Catalog> = self;
-            Ok(Table::new(Arc::clone(&catalog), metadata))
+            Ok(Table::new(
+                Arc::clone(&catalog),
+                metadata,
+                &path.to_string(),
+            ))
         } else if rows.len() == 0 {
-            Err(IcebergError::Message("Not implemented.".to_string()))
+            Err(IcebergError::Message(
+                "Loading the table failed. No table matched the identifier.".to_string(),
+            ))
         } else {
-            Err(IcebergError::Message("Not implemented.".to_string()))
+            Err(IcebergError::Message("Loading table failed. There are multiple catalog entries that matched the identifier.".to_string()))
         }
     }
     /// Invalidate cached table metadata from current catalog.
@@ -246,7 +254,9 @@ impl Catalog for PostgresCatalog {
         if n_rows == 1 {
             self.load_table(identifier).await
         } else if n_rows == 0 {
-            Err(IcebergError::Message("Table already exists".to_string()))
+            Err(IcebergError::Message(
+                "Registering table failed. Table already exists".to_string(),
+            ))
         } else {
             Err(IcebergError::Message(
                 "More than one table was added to the catalog.".to_string(),
@@ -262,6 +272,8 @@ impl Catalog for PostgresCatalog {
     ) -> Result<Table> {
         let namespace = identifier.namespace();
         let table_name = identifier.name();
+        dbg!(metadata_file_location);
+        dbg!(previous_metadata_file_location);
         let n_rows = self
             .client
             .execute(
@@ -299,10 +311,12 @@ impl Catalog for PostgresCatalog {
         if n_rows == 1 {
             self.load_table(identifier).await
         } else if n_rows == 0 {
-            Err(IcebergError::Message("Table already exists".to_string()))
+            Err(IcebergError::Message(
+                "Updating the table failed.".to_string(),
+            ))
         } else {
             Err(IcebergError::Message(
-                "More than one table was added to the catalog.".to_string(),
+                "Multiple entries where updated.".to_string(),
             ))
         }
     }
@@ -313,7 +327,7 @@ impl Catalog for PostgresCatalog {
         schema: SchemaV2,
     ) -> Result<TableBuilder> {
         let catalog: Arc<dyn Catalog> = self;
-        let location = "/".to_string() + &format!("{}", identifier).replace(".", "/");
+        let location = "data.db/".to_string() + &format!("{}", identifier).replace(".", "/");
         TableBuilder::new(identifier, location, schema, Arc::clone(&catalog))
     }
     /// Initialize a catalog given a custom name and a map of catalog properties.

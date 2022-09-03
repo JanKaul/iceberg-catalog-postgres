@@ -13,17 +13,20 @@ mod tests {
 
     use iceberg_rs::catalog::table_identifier::TableIdentifier;
     use iceberg_rs::catalog::{namespace::Namespace, Catalog};
+    use iceberg_rs::model::schema::{AllType, PrimitiveType, SchemaV2, Struct, StructField};
     use iceberg_rs::object_store::memory::InMemory;
+    use iceberg_rs::object_store::path::Path;
+    use iceberg_rs::object_store::ObjectStore;
 
     use super::*;
 
     #[tokio::test]
     async fn test_initialization() {
-        let object_store = Arc::new(InMemory::new());
+        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let (catalog, connection) = catalog::PostgresCatalog::connect(
             "test_catalog",
             "postgres://postgres:postgres@localhost:5432/iceberg_catalog",
-            object_store,
+            Arc::clone(&object_store),
         )
         .await
         .unwrap();
@@ -39,11 +42,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_tables() {
-        let object_store = Arc::new(InMemory::new());
+        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let (catalog, connection) = catalog::PostgresCatalog::connect(
             "test_catalog",
             "postgres://postgres:postgres@localhost:5432/iceberg_catalog",
-            object_store,
+            Arc::clone(&object_store),
         )
         .await
         .unwrap();
@@ -64,12 +67,12 @@ mod tests {
         assert_eq!(4, 4);
     }
     #[tokio::test]
-    async fn test_register_table() {
-        let object_store = Arc::new(InMemory::new());
+    async fn test_create_update_drop_table() {
+        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let (catalog, connection) = catalog::PostgresCatalog::connect(
             "test_catalog",
             "postgres://postgres:postgres@localhost:5432/iceberg_catalog",
-            object_store,
+            Arc::clone(&object_store),
         )
         .await
         .unwrap();
@@ -84,16 +87,40 @@ mod tests {
             .await
             .unwrap();
         let identifier = TableIdentifier::parse("test.table1").unwrap();
-        let _ = Arc::clone(&catalog)
-            .register_table(&identifier, "/data.db/test/table1/<1>-1.metadata.json")
+        let schema = SchemaV2 {
+            schema_id: 1,
+            identifier_field_ids: Some(vec![1, 2]),
+            name_mapping: None,
+            struct_fields: Struct {
+                fields: vec![
+                    StructField {
+                        id: 1,
+                        name: "one".to_string(),
+                        required: false,
+                        field_type: AllType::Primitive(PrimitiveType::String),
+                        doc: None,
+                    },
+                    StructField {
+                        id: 2,
+                        name: "two".to_string(),
+                        required: false,
+                        field_type: AllType::Primitive(PrimitiveType::String),
+                        doc: None,
+                    },
+                ],
+            },
+        };
+        let table = Arc::clone(&catalog)
+            .create_table(identifier.clone(), schema)
             .await
             .unwrap();
+        let metadata_location = table.metadata_location().to_string();
+        let next_metadata_location = "data.db/test/table1/2-2.metadata.json".to_string();
+        let from: Path = metadata_location.clone().into();
+        let to: Path = next_metadata_location.clone().into();
+        object_store.copy(&from, &to).await.unwrap();
         let _ = Arc::clone(&catalog)
-            .update_table(
-                &identifier,
-                "/data.db/test/table1/<2>-2.metadata.json",
-                "/data.db/test/table1/<1>-1.metadata.json",
-            )
+            .update_table(&identifier, &next_metadata_location, &metadata_location)
             .await
             .unwrap();
         let _ = catalog.drop_table(&identifier).await.unwrap();
