@@ -104,8 +104,35 @@ impl Catalog for PostgresCatalog {
         builder.commit().await
     }
     /// Check if a table exists
-    async fn table_exists(&self, identifier: &TableIdentifier) -> bool {
-        false
+    async fn table_exists(&self, identifier: &TableIdentifier) -> Result<bool> {
+        let namespace = identifier.namespace();
+        let table_name = identifier.name();
+        let rows = self
+            .client
+            .query(
+                &("SELECT EXISTS (SELECT 1".to_string()
+                    + " FROM "
+                    + CATALOG_TABLE_NAME
+                    + " WHERE "
+                    + CATALOG_NAME_COLUMN
+                    + " = '"
+                    + &self.name
+                    + "' AND "
+                    + TABLE_NAMESPACE_COLUMN
+                    + " = '"
+                    + &format!("{}", namespace)
+                    + "' AND "
+                    + TABLE_NAME_COLUMN
+                    + " = '"
+                    + table_name
+                    + "');"),
+                &[],
+            )
+            .await
+            .map_err(|err| IcebergError::Message(err.to_string()))?;
+        rows[0]
+            .try_get::<_, bool>("exists")
+            .map_err(|err| IcebergError::Message(err.to_string()))
     }
     /// Drop a table and delete all data and metadata files.
     async fn drop_table(&self, identifier: &TableIdentifier) -> Result<()> {

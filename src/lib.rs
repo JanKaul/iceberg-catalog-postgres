@@ -114,6 +114,11 @@ mod tests {
             .create_table(identifier.clone(), schema)
             .await
             .unwrap();
+        let exists = Arc::clone(&catalog)
+            .table_exists(&identifier)
+            .await
+            .unwrap();
+        assert_eq!(exists, true);
         let metadata_location = table.metadata_location().to_string();
         let next_metadata_location = "data.db/test/table1/2-2.metadata.json".to_string();
         let from: Path = metadata_location.clone().into();
