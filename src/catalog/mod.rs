@@ -10,7 +10,8 @@ use iceberg_rs::{
         Catalog,
     },
     error::{IcebergError, Result},
-    model::schema::SchemaV2,
+    model::{schema::SchemaV2, table::TableMetadataV2},
+    object_store::path::Path,
     table::Table,
 };
 
@@ -26,7 +27,7 @@ static PREVIOUS_METADATA_LOCATION_COLUMN: &str = "previous_metadata_location";
 
 /// Postgres catalog
 pub struct PostgresCatalog {
-    name: Option<String>,
+    name: String,
     client: Client,
     object_store: Arc<dyn ObjectStore>,
 }
@@ -34,6 +35,7 @@ pub struct PostgresCatalog {
 impl PostgresCatalog {
     /// Synchronously create a PostgresCatalog object that needs to be initialized later
     pub async fn connect(
+        name: &str,
         url: &str,
         object_store: Arc<dyn ObjectStore>,
     ) -> Result<(Self, Connection<Socket, NoTlsStream>)> {
@@ -43,7 +45,7 @@ impl PostgresCatalog {
         Ok((
             PostgresCatalog {
                 client: client,
-                name: None,
+                name: name.to_string(),
                 object_store: object_store,
             },
             connection,
@@ -55,9 +57,6 @@ impl PostgresCatalog {
 impl Catalog for PostgresCatalog {
     /// Lists all tables in the given namespace.
     async fn list_tables(&self, namespace: &Namespace) -> Result<Vec<TableIdentifier>> {
-        let catalog_name = self.name.as_ref().ok_or(IcebergError::Message(
-            "Catalog is not initialized".to_string(),
-        ))?;
         let rows = self
             .client
             .query(
@@ -76,7 +75,7 @@ impl Catalog for PostgresCatalog {
                     + " WHERE ("
                     + CATALOG_NAME_COLUMN
                     + " = '"
-                    + catalog_name
+                    + &self.name
                     + "' AND "
                     + TABLE_NAMESPACE_COLUMN
                     + "= '"
@@ -99,7 +98,11 @@ impl Catalog for PostgresCatalog {
             .collect::<std::result::Result<Vec<_>, IcebergError>>()
     }
     /// Create a table from an identifier and a schema
-    async fn create_table(&self, identifier: &TableIdentifier, schema: &SchemaV2) -> Result<Table> {
+    async fn create_table(
+        self: Arc<Self>,
+        identifier: &TableIdentifier,
+        schema: &SchemaV2,
+    ) -> Result<Table> {
         Err(IcebergError::Message("Not implemented.".to_string()))
     }
     /// Check if a table exists
@@ -108,11 +111,93 @@ impl Catalog for PostgresCatalog {
     }
     /// Drop a table and delete all data and metadata files.
     async fn drop_table(&self, identifier: &TableIdentifier) -> Result<()> {
-        Err(IcebergError::Message("Not implemented.".to_string()))
+        let namespace = identifier.namespace();
+        let table_name = identifier.name();
+        let n_rows = self
+            .client
+            .execute(
+                &("DELETE FROM ".to_string()
+                    + CATALOG_TABLE_NAME
+                    + " WHERE "
+                    + CATALOG_NAME_COLUMN
+                    + " = '"
+                    + &self.name
+                    + "' AND "
+                    + TABLE_NAMESPACE_COLUMN
+                    + " = '"
+                    + &format!("{}", namespace)
+                    + "' AND "
+                    + TABLE_NAME_COLUMN
+                    + " = '"
+                    + table_name
+                    + "';"),
+                &[],
+            )
+            .await
+            .map_err(|err| IcebergError::Message(err.to_string()))?;
+        if n_rows == 1 {
+            // TODO: Delete associated files
+            Ok(())
+        } else if n_rows == 0 {
+            Err(IcebergError::Message("Table already exists".to_string()))
+        } else {
+            Err(IcebergError::Message(
+                "More than one table was added to the catalog.".to_string(),
+            ))
+        }
     }
     /// Load a table.
-    async fn load_table(&self, identifier: &TableIdentifier) -> Result<Table> {
-        Err(IcebergError::Message("Not implemented.".to_string()))
+    async fn load_table(self: Arc<Self>, identifier: &TableIdentifier) -> Result<Table> {
+        let namespace = identifier.namespace();
+        let table_name = identifier.name();
+        let rows = self
+            .client
+            .query(
+                &("SELECT ".to_string()
+                    + METADATA_LOCATION_COLUMN
+                    + " FROM "
+                    + CATALOG_TABLE_NAME
+                    + " WHERE "
+                    + CATALOG_NAME_COLUMN
+                    + " = '"
+                    + &self.name
+                    + "' AND "
+                    + TABLE_NAMESPACE_COLUMN
+                    + " = '"
+                    + &format!("{}", namespace)
+                    + "' AND "
+                    + TABLE_NAME_COLUMN
+                    + " = '"
+                    + table_name
+                    + "';"),
+                &[],
+            )
+            .await
+            .map_err(|err| IcebergError::Message(err.to_string()))?;
+        if rows.len() == 1 {
+            let path: Path = rows[0]
+                .try_get::<_, &str>(METADATA_LOCATION_COLUMN)
+                .map_err(|err| IcebergError::Message(err.to_string()))?
+                .into();
+            let bytes = &self
+                .object_store
+                .get(&path)
+                .await
+                .map_err(|err| IcebergError::Message(err.to_string()))?
+                .bytes()
+                .await
+                .map_err(|err| IcebergError::Message(err.to_string()))?;
+            let metadata: TableMetadataV2 = serde_json::from_str(
+                std::str::from_utf8(bytes).map_err(|err| IcebergError::Message(err.to_string()))?,
+            )
+            .map_err(|err| IcebergError::Message(err.to_string()))?;
+            let catalog: Arc<dyn Catalog> = self;
+            Ok(Table::new(Arc::clone(&catalog), metadata))
+        } else if rows.len() == 0 {
+            Err(IcebergError::Message("Not implemented.".to_string()))
+        } else {
+            Err(IcebergError::Message("Not implemented.".to_string()))
+        }
     }
     /// Invalidate cached table metadata from current catalog.
     async fn invalidate_table(&self, identifier: &TableIdentifier) -> Result<()> {
@@ -120,13 +205,10 @@ impl Catalog for PostgresCatalog {
     }
     /// Register a table with the catalog if it doesn't exist.
     async fn register_table(
-        &self,
+        self: Arc<Self>,
         identifier: &TableIdentifier,
         metadata_file_location: &str,
     ) -> Result<Table> {
-        let catalog_name = self.name.as_ref().ok_or(IcebergError::Message(
-            "Catalog is not initialized".to_string(),
-        ))?;
         let namespace = identifier.namespace();
         let table_name = identifier.name();
         let n_rows = self
@@ -145,7 +227,7 @@ impl Catalog for PostgresCatalog {
                     + ", "
                     + PREVIOUS_METADATA_LOCATION_COLUMN
                     + ") VALUES ('"
-                    + catalog_name
+                    + &self.name
                     + "', '"
                     + &format!("{}", namespace)
                     + "', '"
@@ -173,9 +255,62 @@ impl Catalog for PostgresCatalog {
             ))
         }
     }
+    /// Update a table by atomically changing the pointer to the metadata file
+    async fn update_table(
+        self: Arc<Self>,
+        identifier: &TableIdentifier,
+        metadata_file_location: &str,
+        previous_metadata_file_location: &str,
+    ) -> Result<Table> {
+        let namespace = identifier.namespace();
+        let table_name = identifier.name();
+        let n_rows = self
+            .client
+            .execute(
+                &("UPDATE ".to_string()
+                    + CATALOG_TABLE_NAME
+                    + " SET "
+                    + METADATA_LOCATION_COLUMN
+                    + " = '"
+                    + metadata_file_location
+                    + "', "
+                    + PREVIOUS_METADATA_LOCATION_COLUMN
+                    + " = '"
+                    + previous_metadata_file_location
+                    + "' WHERE "
+                    + CATALOG_NAME_COLUMN
+                    + " = '"
+                    + &self.name
+                    + "' AND "
+                    + TABLE_NAMESPACE_COLUMN
+                    + " = '"
+                    + &format!("{}", namespace)
+                    + "' AND "
+                    + TABLE_NAME_COLUMN
+                    + " = '"
+                    + table_name
+                    + "' AND "
+                    + METADATA_LOCATION_COLUMN
+                    + " = '"
+                    + previous_metadata_file_location
+                    + "';"),
+                &[],
+            )
+            .await
+            .map_err(|err| IcebergError::Message(err.to_string()))?;
+        if n_rows == 1 {
+            self.load_table(identifier).await
+        } else if n_rows == 0 {
+            Err(IcebergError::Message("Table already exists".to_string()))
+        } else {
+            Err(IcebergError::Message(
+                "More than one table was added to the catalog.".to_string(),
+            ))
+        }
+    }
     /// Instantiate a builder to either create a table or start a create/replace transaction.
     async fn build_table(
-        &self,
+        self: Arc<Self>,
         identifier: &TableIdentifier,
         schema: &SchemaV2,
     ) -> Result<TableBuilder> {
@@ -185,8 +320,7 @@ impl Catalog for PostgresCatalog {
     /// A custom Catalog implementation must have a no-arg constructor. A compute engine like Spark
     /// or Flink will first initialize the catalog without any arguments, and then call this method to
     /// complete catalog initialization with properties passed into the engine.
-    async fn initialize(&mut self, name: &str, properties: &HashMap<String, String>) -> Result<()> {
-        self.name = Some(name.to_string());
+    async fn initialize(self: Arc<Self>, properties: &HashMap<String, String>) -> Result<()> {
         self.client
             .execute(
                 &("CREATE TABLE IF NOT EXISTS ".to_string()
