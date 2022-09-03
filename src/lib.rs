@@ -129,6 +129,10 @@ mod tests {
             .await
             .unwrap();
         let _ = catalog.drop_table(&identifier).await.unwrap();
-        assert_eq!(4, 4);
+        let exists = Arc::clone(&catalog)
+            .table_exists(&identifier)
+            .await
+            .unwrap();
+        assert_eq!(exists, false);
     }
 }
