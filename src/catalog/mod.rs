@@ -5,14 +5,11 @@ Implements the postgres catalog
 use std::{collections::HashMap, sync::Arc};
 
 use iceberg_rs::{
-    catalog::{
-        namespace::Namespace, table_builder::TableBuilder, table_identifier::TableIdentifier,
-        Catalog,
-    },
+    catalog::{namespace::Namespace, table_identifier::TableIdentifier, Catalog},
     error::{IcebergError, Result},
     model::{schema::SchemaV2, table::TableMetadataV2},
     object_store::path::Path,
-    table::Table,
+    table::{table_builder::TableBuilder, Table},
 };
 
 use iceberg_rs::object_store::ObjectStore;
@@ -100,10 +97,11 @@ impl Catalog for PostgresCatalog {
     /// Create a table from an identifier and a schema
     async fn create_table(
         self: Arc<Self>,
-        identifier: &TableIdentifier,
-        schema: &SchemaV2,
+        identifier: TableIdentifier,
+        schema: SchemaV2,
     ) -> Result<Table> {
-        Err(IcebergError::Message("Not implemented.".to_string()))
+        let builder = self.build_table(identifier, schema).await?;
+        builder.commit().await
     }
     /// Check if a table exists
     async fn table_exists(&self, identifier: &TableIdentifier) -> bool {
@@ -311,10 +309,12 @@ impl Catalog for PostgresCatalog {
     /// Instantiate a builder to either create a table or start a create/replace transaction.
     async fn build_table(
         self: Arc<Self>,
-        identifier: &TableIdentifier,
-        schema: &SchemaV2,
+        identifier: TableIdentifier,
+        schema: SchemaV2,
     ) -> Result<TableBuilder> {
-        Err(IcebergError::Message("Not implemented.".to_string()))
+        let catalog: Arc<dyn Catalog> = self;
+        let location = "/".to_string() + &format!("{}", identifier).replace(".", "/");
+        TableBuilder::new(identifier, location, schema, Arc::clone(&catalog))
     }
     /// Initialize a catalog given a custom name and a map of catalog properties.
     /// A custom Catalog implementation must have a no-arg constructor. A compute engine like Spark
