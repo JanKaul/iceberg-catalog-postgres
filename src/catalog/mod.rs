@@ -6,12 +6,12 @@ use std::{collections::HashMap, sync::Arc};
 
 use iceberg_rs::{
     catalog::{namespace::Namespace, table_identifier::TableIdentifier, Catalog},
-    error::{IcebergError, Result},
     model::{schema::SchemaV2, table::TableMetadataV2},
     object_store::path::Path,
     table::{table_builder::TableBuilder, Table},
 };
 
+use anyhow::{anyhow, Result};
 use iceberg_rs::object_store::ObjectStore;
 use tokio_postgres::{tls::NoTlsStream, Client, Connection, NoTls, Socket};
 
@@ -38,7 +38,7 @@ impl PostgresCatalog {
     ) -> Result<(Self, Connection<Socket, NoTlsStream>)> {
         let (client, connection) = tokio_postgres::connect(&url, NoTls)
             .await
-            .map_err(|err| IcebergError::Message(format!("{}", err)))?;
+            .map_err(|err| anyhow!(err.to_string()))?;
         Ok((
             PostgresCatalog {
                 client: client,
@@ -81,18 +81,18 @@ impl Catalog for PostgresCatalog {
                 &[],
             )
             .await
-            .map_err(|err| IcebergError::Message(err.to_string()))?;
+            .map_err(|err| anyhow!(err.to_string()))?;
         rows.into_iter()
             .map(|x| {
                 let namespace: &str = x
                     .try_get(&TABLE_NAMESPACE_COLUMN)
-                    .map_err(|err| IcebergError::Message(err.to_string()))?;
+                    .map_err(|err| anyhow!(err.to_string()))?;
                 let name: &str = x
                     .try_get(TABLE_NAME_COLUMN)
-                    .map_err(|err| IcebergError::Message(err.to_string()))?;
+                    .map_err(|err| anyhow!(err.to_string()))?;
                 Ok(TableIdentifier::parse(&format!("{}.{}", namespace, name))?)
             })
-            .collect::<std::result::Result<Vec<_>, IcebergError>>()
+            .collect::<std::result::Result<Vec<_>, anyhow::Error>>()
     }
     /// Create a table from an identifier and a schema
     async fn create_table(
@@ -129,10 +129,10 @@ impl Catalog for PostgresCatalog {
                 &[],
             )
             .await
-            .map_err(|err| IcebergError::Message(err.to_string()))?;
+            .map_err(|err| anyhow!(err.to_string()))?;
         rows[0]
             .try_get::<_, bool>("exists")
-            .map_err(|err| IcebergError::Message(err.to_string()))
+            .map_err(|err| anyhow!(err.to_string()))
     }
     /// Drop a table and delete all data and metadata files.
     async fn drop_table(&self, identifier: &TableIdentifier) -> Result<()> {
@@ -159,22 +159,22 @@ impl Catalog for PostgresCatalog {
                 &[],
             )
             .await
-            .map_err(|err| IcebergError::Message(err.to_string()))?;
+            .map_err(|err| anyhow!(err.to_string()))?;
         if n_rows == 1 {
             // TODO: Delete associated files
             Ok(())
         } else if n_rows == 0 {
-            Err(IcebergError::Message(
+            Err(anyhow!(
                 "Dropping table failed. No table matched the identifier.".to_string(),
             ))
         } else {
-            Err(IcebergError::Message(
+            Err(anyhow!(
                 "More than one table was dropped from the catalog.".to_string(),
             ))
         }
     }
     /// Load a table.
-    async fn load_table(self: Arc<Self>, identifier: &TableIdentifier) -> Result<Table> {
+    async fn load_table(self: Arc<Self>, identifier: TableIdentifier) -> Result<Table> {
         let namespace = identifier.namespace();
         let table_name = identifier.name();
         let rows = self
@@ -200,46 +200,47 @@ impl Catalog for PostgresCatalog {
                 &[],
             )
             .await
-            .map_err(|err| IcebergError::Message(err.to_string()))?;
+            .map_err(|err| anyhow!(err.to_string()))?;
         if rows.len() == 1 {
             let path: Path = rows[0]
                 .try_get::<_, &str>(METADATA_LOCATION_COLUMN)
-                .map_err(|err| IcebergError::Message(err.to_string()))?
+                .map_err(|err| anyhow!(err.to_string()))?
                 .into();
             let bytes = &self
                 .object_store
                 .get(&path)
                 .await
-                .map_err(|err| IcebergError::Message(err.to_string()))?
+                .map_err(|err| anyhow!(err.to_string()))?
                 .bytes()
                 .await
-                .map_err(|err| IcebergError::Message(err.to_string()))?;
+                .map_err(|err| anyhow!(err.to_string()))?;
             let metadata: TableMetadataV2 = serde_json::from_str(
-                std::str::from_utf8(bytes).map_err(|err| IcebergError::Message(err.to_string()))?,
+                std::str::from_utf8(bytes).map_err(|err| anyhow!(err.to_string()))?,
             )
-            .map_err(|err| IcebergError::Message(err.to_string()))?;
+            .map_err(|err| anyhow!(err.to_string()))?;
             let catalog: Arc<dyn Catalog> = self;
             Ok(Table::new(
+                identifier,
                 Arc::clone(&catalog),
                 metadata,
                 &path.to_string(),
             ))
         } else if rows.len() == 0 {
-            Err(IcebergError::Message(
+            Err(anyhow!(
                 "Loading the table failed. No table matched the identifier.".to_string(),
             ))
         } else {
-            Err(IcebergError::Message("Loading table failed. There are multiple catalog entries that matched the identifier.".to_string()))
+            Err(anyhow!("Loading table failed. There are multiple catalog entries that matched the identifier.".to_string()))
         }
     }
     /// Invalidate cached table metadata from current catalog.
     async fn invalidate_table(&self, identifier: &TableIdentifier) -> Result<()> {
-        Err(IcebergError::Message("Not implemented.".to_string()))
+        Err(anyhow!("Not implemented.".to_string()))
     }
     /// Register a table with the catalog if it doesn't exist.
     async fn register_table(
         self: Arc<Self>,
-        identifier: &TableIdentifier,
+        identifier: TableIdentifier,
         metadata_file_location: &str,
     ) -> Result<Table> {
         let namespace = identifier.namespace();
@@ -277,15 +278,15 @@ impl Catalog for PostgresCatalog {
                 &[],
             )
             .await
-            .map_err(|err| IcebergError::Message(err.to_string()))?;
+            .map_err(|err| anyhow!(err.to_string()))?;
         if n_rows == 1 {
             self.load_table(identifier).await
         } else if n_rows == 0 {
-            Err(IcebergError::Message(
+            Err(anyhow!(
                 "Registering table failed. Table already exists".to_string(),
             ))
         } else {
-            Err(IcebergError::Message(
+            Err(anyhow!(
                 "More than one table was added to the catalog.".to_string(),
             ))
         }
@@ -293,7 +294,7 @@ impl Catalog for PostgresCatalog {
     /// Update a table by atomically changing the pointer to the metadata file
     async fn update_table(
         self: Arc<Self>,
-        identifier: &TableIdentifier,
+        identifier: TableIdentifier,
         metadata_file_location: &str,
         previous_metadata_file_location: &str,
     ) -> Result<Table> {
@@ -334,17 +335,13 @@ impl Catalog for PostgresCatalog {
                 &[],
             )
             .await
-            .map_err(|err| IcebergError::Message(err.to_string()))?;
+            .map_err(|err| anyhow!(err.to_string()))?;
         if n_rows == 1 {
             self.load_table(identifier).await
         } else if n_rows == 0 {
-            Err(IcebergError::Message(
-                "Updating the table failed.".to_string(),
-            ))
+            Err(anyhow!("Updating the table failed.".to_string(),))
         } else {
-            Err(IcebergError::Message(
-                "Multiple entries where updated.".to_string(),
-            ))
+            Err(anyhow!("Multiple entries where updated.".to_string(),))
         }
     }
     /// Instantiate a builder to either create a table or start a create/replace transaction.
@@ -388,7 +385,7 @@ impl Catalog for PostgresCatalog {
                 &[],
             )
             .await
-            .map_err(|err| IcebergError::Message(err.to_string()))?;
+            .map_err(|err| anyhow!(err.to_string()))?;
         Ok(())
     }
     fn object_store(&self) -> Arc<dyn ObjectStore> {

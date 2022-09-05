@@ -125,7 +125,11 @@ mod tests {
         let to: Path = next_metadata_location.clone().into();
         object_store.copy(&from, &to).await.unwrap();
         let _ = Arc::clone(&catalog)
-            .update_table(&identifier, &next_metadata_location, &metadata_location)
+            .update_table(
+                identifier.clone(),
+                &next_metadata_location,
+                &metadata_location,
+            )
             .await
             .unwrap();
         let _ = catalog.drop_table(&identifier).await.unwrap();
