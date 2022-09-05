@@ -352,7 +352,7 @@ impl Catalog for PostgresCatalog {
     ) -> Result<TableBuilder> {
         let catalog: Arc<dyn Catalog> = self;
         let location = "data.db/".to_string() + &format!("{}", identifier).replace(".", "/");
-        TableBuilder::new_metastore_table(location, schema, identifier, Arc::clone(&catalog))
+        TableBuilder::new_metastore_table(&location, schema, identifier, Arc::clone(&catalog))
     }
     /// Initialize a catalog given a custom name and a map of catalog properties.
     /// A custom Catalog implementation must have a no-arg constructor. A compute engine like Spark
