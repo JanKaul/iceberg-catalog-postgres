@@ -6,7 +6,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use iceberg_rs::{
     catalog::{namespace::Namespace, table_identifier::TableIdentifier, Catalog},
-    model::{schema::SchemaV2, table::TableMetadataV2},
+    model::{schema::SchemaV2, table_metadata::TableMetadata},
     object_store::path::Path,
     table::{table_builder::TableBuilder, Table},
 };
@@ -214,7 +214,7 @@ impl Catalog for PostgresCatalog {
                 .bytes()
                 .await
                 .map_err(|err| anyhow!(err.to_string()))?;
-            let metadata: TableMetadataV2 = serde_json::from_str(
+            let metadata: TableMetadata = serde_json::from_str(
                 std::str::from_utf8(bytes).map_err(|err| anyhow!(err.to_string()))?,
             )
             .map_err(|err| anyhow!(err.to_string()))?;
@@ -224,7 +224,8 @@ impl Catalog for PostgresCatalog {
                 Arc::clone(&catalog),
                 metadata,
                 &path.to_string(),
-            ))
+            )
+            .await?)
         } else if rows.len() == 0 {
             Err(anyhow!(
                 "Loading the table failed. No table matched the identifier.".to_string(),
@@ -400,7 +401,7 @@ mod tests {
 
     use iceberg_rs::catalog::table_identifier::TableIdentifier;
     use iceberg_rs::catalog::Catalog;
-    use iceberg_rs::model::schema::{AllType, PrimitiveType, SchemaV2, Struct, StructField};
+    use iceberg_rs::model::schema::{AllType, PrimitiveType, SchemaStruct, SchemaV2, StructField};
     use iceberg_rs::object_store::memory::InMemory;
     use iceberg_rs::object_store::ObjectStore;
 
@@ -431,7 +432,7 @@ mod tests {
             schema_id: 1,
             identifier_field_ids: Some(vec![1, 2]),
             name_mapping: None,
-            struct_fields: Struct {
+            struct_fields: SchemaStruct {
                 fields: vec![
                     StructField {
                         id: 1,
